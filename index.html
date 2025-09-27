@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>衛星影像元數據解析與匯出工具</title>
+    <!-- 載入 Tailwind CSS - 為了美觀與響應式設計 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 設定字體為 Inter */
+        html { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen p-4 md:p-8">
+
+    <div id="app" class="max-w-7xl mx-auto">
+        <header class="mb-8 text-center">
+            <h1 class="text-4xl font-extrabold text-teal-700">衛星元數據批次解析</h1>
+            <p class="text-gray-600 mt-2">請將網頁元素中找到的 <code>jQuery.data(...)</code> 字串貼入下方區域進行解析。</p>
+        </header>
+
+        <!-- 輸入與操作區塊 -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100 mb-8">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">步驟 1: 輸入原始數據</h2>
+            
+            <textarea id="raw-input" rows="8" placeholder="請貼入一筆或多筆 jQuery.data(body,'CSR_...', {IMAGE_ID:'...', ...}); 格式的字串"
+                      class="w-full p-3 border border-gray-300 rounded-lg focus:ring-teal-500 focus:border-teal-500 transition duration-150 font-mono text-sm"></textarea>
+
+            <div class="flex flex-col md:flex-row gap-4 mt-4">
+                 <button id="process-button"
+                    class="flex-1 px-6 py-3 bg-teal-600 text-white font-bold rounded-lg shadow-md
+                           hover:bg-teal-700 transition duration-200 transform hover:scale-[1.01]">
+                    <span class="mr-2">⚡</span> 解析並添加數據
+                </button>
+                <button id="download-button" disabled
+                    class="flex-1 px-6 py-3 bg-green-500 text-white font-bold rounded-lg shadow-md opacity-50 cursor-not-allowed
+                           transition duration-200" title="在有數據後啟用">
+                    <span class="mr-2">⬇️</span> 下載試算表 (CSV)
+                </button>
+            </div>
+            <div id="message-box" class="mt-4 p-3 rounded-lg hidden text-sm font-medium"></div>
+        </div>
+
+        <!-- 查詢結果區塊 -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+            <h2 class="text-2xl font-semibold text-gray-700 mb-4">步驟 2: 提取結果表格 (共 <span id="record-count" class="font-mono text-teal-600">0</span> 筆)</h2>
+            
+            <div id="metadata-table-wrapper" class="overflow-x-auto rounded-lg border border-gray-200">
+                <table id="metadata-table" class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-teal-50">
+                        <tr>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">序號</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">IMAGE_ID</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">SATELLITE</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">SENSOR</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">ACQU_DATE (完整)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Incidence Angle</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">View Angle(Along)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">View Angle(Cross)</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Sun Azimuth</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Sun Elevation</th>
+                            <th class="px-3 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">Orientation</th>
+                            <th class="px-3 py-3 text-center text-xs font-medium text-gray-600 uppercase tracking-wider">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-body" class="bg-white divide-y divide-gray-200">
+                        <tr>
+                            <td colspan="12" class="p-4 text-center text-gray-400 italic">請在上方輸入框貼入數據並點擊「解析並添加數據」。</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 儲存所有提取到的元數據
+        let metadataCollection = [];
+
+        // 步驟 1: 獲取 DOM 元素
+        const inputArea = document.getElementById('raw-input');
+        const processButton = document.getElementById('process-button');
+        const downloadButton = document.getElementById('download-button');
+        const messageBox = document.getElementById('message-box');
+        const tableBody = document.getElementById('table-body');
+        const recordCountSpan = document.getElementById('record-count');
+
+        /**
+         * @description 將數值轉換為精確到小數點後 6 位的字串。如果輸入無效則返回 '-'。
+         * @param {string|number} value
+         * @returns {string} 格式化後的字串
+         */
+        function formatAngle(value) {
+            if (value === null || value === undefined || value === '' || value === 'null' || isNaN(parseFloat(value))) {
+                return '-'; // Return placeholder for missing data
+            }
+            // 使用 Number 轉換並四捨五入到小數點後 6 位
+            return parseFloat(value).toFixed(6);
+        }
+        
+        // 步驟 2: 輔助函數 - 顯示訊息
+        function showMessage(text, type = 'info') {
+            messageBox.textContent = text;
+            messageBox.classList.remove('hidden', 'bg-red-100', 'text-red-800', 'bg-green-100', 'text-green-800', 'bg-yellow-100', 'text-yellow-800');
+            
+            switch(type) {
+                case 'error':
+                    messageBox.classList.add('bg-red-100', 'text-red-800');
+                    break;
+                case 'success':
+                    messageBox.classList.add('bg-green-100', 'text-green-800');
+                    break;
+                case 'info':
+                default:
+                    messageBox.classList.add('bg-yellow-100', 'text-yellow-800');
+                    break;
+            }
+            messageBox.classList.remove('hidden');
+        }
+
+        /**
+         * @description 根據索引刪除 metadataCollection 中的一筆記錄並重新渲染表格。
+         * @param {number} index 要刪除記錄的索引。
+         */
+        function deleteRecord(index) {
+            if (index >= 0 && index < metadataCollection.length) {
+                // 移除該索引的元素
+                metadataCollection.splice(index, 1);
+                
+                // 重新渲染表格
+                renderTable();
+                
+                // 顯示成功訊息
+                showMessage(`已成功刪除記錄。目前剩餘 ${metadataCollection.length} 筆數據。`, 'info');
+            } else {
+                showMessage('刪除記錄時發生錯誤：無效的索引。', 'error');
+            }
+        }
+
+        /**
+         * @description 從原始字串中提取所有 jQuery.data() 裡面的元數據物件字串。
+         * @param {string} rawText 包含 jQuery.data() 調用的原始字串。
+         * @returns {Array<string>} 包含元數據物件字串的陣列 (例如: "{IMAGE_ID:'CSR_...',...}")
+         */
+        function extractDataBlocks(rawText) {
+            // 匹配所有 jQuery.data(body,'KEY', { ...object... }); 格式的字串
+            // 捕獲群組 1 包含整個 metadata object string
+            const regex = /jQuery\.data\(body,'[^,]+',(\{.*?\})\);\s*/gs;
+            const matches = [...rawText.matchAll(regex)];
+            
+            return matches.map(match => match[1]);
+        }
+        
+        /**
+         * @description 將元數據物件字串轉換為結構化的 JavaScript 物件。
+         * @param {string} dataString 
+         * @returns {object|null} 轉換後的物件，如果解析失敗則為 null。
+         */
+        function parseDataBlock(dataString) {
+            try {
+                // 由於原始數據格式非標準 JSON，使用 Function 構造函數來安全地解析 JS 對象字串
+                const func = new Function(`return ${dataString}`);
+                return func();
+
+            } catch (e) {
+                console.error("解析數據區塊失敗:", e, "原始字串:", dataString);
+                showMessage('數據區塊格式錯誤，請檢查主控台的詳細錯誤。', 'error');
+                return null;
+            }
+        }
+
+        // 步驟 3: 主要處理函式
+        processButton.addEventListener('click', () => {
+            const rawText = inputArea.value.trim();
+            if (!rawText) {
+                showMessage('請在文字框中貼入 jQuery.data(...) 數據。', 'info');
+                return;
+            }
+
+            const dataBlocks = extractDataBlocks(rawText);
+            let processedCount = 0;
+            let errorCount = 0;
+
+            dataBlocks.forEach(block => {
+                const dataObject = parseDataBlock(block);
+                
+                if (dataObject) {
+                    // 提取所需的欄位 (現為 10 個)
+                    const extractedData = {
+                        IMAGE_ID: dataObject.IMAGE_ID || '-',
+                        SATELLITE: dataObject.SATELLITE || '-',
+                        SENSOR: dataObject.SENSOR || '-',
+                        ACQU_DATE: dataObject.ACQU_DATE || '-',
+                        // Incidence Angle 來自 VIEWANGLE (根據用戶要求修改)
+                        Incidence_Angle: dataObject.VIEWANGLE || '-',
+                        // 角度數據 (注意欄位對應)
+                        View_Angle_Along: dataObject.VIEWING_ANGLE_ALONG_TRACK || '-',
+                        View_Angle_Cross: dataObject.VIEWING_ANGLE_ACROSS_TRACK || '-',
+                        Sun_Azimuth: dataObject.AZIMUTH || '-', // 對應 AZIMUTH
+                        Sun_Elevation: dataObject.ELEVATION || '-', // 對應 ELEVATION
+                        Orientation: dataObject.ORIENTATION || '-',
+                    };
+                    metadataCollection.push(extractedData);
+                    processedCount++;
+                } else {
+                    errorCount++;
+                }
+            });
+
+            // 清空輸入框以準備下次輸入
+            inputArea.value = '';
+
+            renderTable();
+            
+            if (errorCount > 0) {
+                 showMessage(`解析完成。成功添加 ${processedCount} 筆數據，有 ${errorCount} 筆數據因格式錯誤而被忽略。`, 'error');
+            } else if (processedCount > 0) {
+                showMessage(`解析完成。成功添加 ${processedCount} 筆數據。`, 'success');
+            } else {
+                 showMessage('輸入框中未檢測到有效的 jQuery.data(...) 格式數據。', 'info');
+            }
+        });
+
+
+        // 步驟 4: 渲染表格
+        function renderTable() {
+            tableBody.innerHTML = '';
+            recordCountSpan.textContent = metadataCollection.length;
+            
+            if (metadataCollection.length === 0) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="12" class="p-4 text-center text-gray-400 italic">請在上方輸入框貼入數據並點擊「解析並添加數據」。</td>
+                    </tr>
+                `;
+                downloadButton.disabled = true;
+                downloadButton.classList.add('opacity-50', 'cursor-not-allowed');
+                downloadButton.classList.remove('hover:bg-green-700');
+                return;
+            }
+
+            downloadButton.disabled = false;
+            downloadButton.classList.remove('opacity-50', 'cursor-not-allowed');
+            downloadButton.classList.add('hover:bg-green-700');
+
+            metadataCollection.forEach((data, index) => {
+                const row = tableBody.insertRow();
+                row.classList.add('hover:bg-gray-50', 'transition', 'duration-100');
+                
+                // 定義表格中顯示的欄位順序 (與表頭一致)
+                const displayFields = [
+                    index + 1, // 序號
+                    data.IMAGE_ID,
+                    data.SATELLITE,
+                    data.SENSOR,
+                    data.ACQU_DATE,
+                    formatAngle(data.Incidence_Angle), // Incidence Angle
+                    formatAngle(data.View_Angle_Along),
+                    formatAngle(data.View_Angle_Cross),
+                    formatAngle(data.Sun_Azimuth),
+                    formatAngle(data.Sun_Elevation),
+                    formatAngle(data.Orientation),
+                ];
+
+                displayFields.forEach(value => {
+                    const cell = row.insertCell();
+                    cell.textContent = value;
+                    cell.classList.add('px-3', 'py-2', 'whitespace-nowrap', 'text-sm', 'text-gray-700');
+                    // 對角度欄位右對齊
+                    if (typeof value === 'string' && value.includes('.')) {
+                        cell.classList.add('font-mono', 'text-right');
+                    }
+                });
+
+                // 新增操作欄位 (刪除按鈕)
+                const actionCell = row.insertCell();
+                actionCell.classList.add('px-3', 'py-2', 'whitespace-nowrap', 'text-sm', 'text-center');
+                actionCell.innerHTML = `
+                    <button onclick="deleteRecord(${index})" 
+                            class="text-red-600 hover:text-red-800 font-medium p-1 rounded hover:bg-red-100 transition duration-150">
+                        刪除
+                    </button>
+                `;
+            });
+        }
+
+
+        // 步驟 5: CSV 下載邏輯
+        downloadButton.addEventListener('click', downloadCSV);
+
+        function downloadCSV() {
+            if (metadataCollection.length === 0) {
+                showMessage('表格中沒有數據可以下載。', 'error');
+                return;
+            }
+
+            // 定義最終 CSV 標頭（與您的需求一致）
+            const headers = [
+                '序號',
+                'IMAGE_ID', 
+                'SATELLITE', 
+                'SENSOR', 
+                'ACQU_DATE', 
+                'Incidence Angle', // 新增 Incidence Angle
+                'View Angle(Along)', 
+                'View Angle(Cross)', 
+                'Sun Azimuth', 
+                'Sun Elevation', 
+                'Orientation',
+            ];
+
+            let csv = headers.join(',') + '\n';
+
+            // 迭代結果並組裝 CSV 內容
+            metadataCollection.forEach((data, index) => {
+                // 在 CSV 輸出時對角度進行格式化 (6 位小數)
+                const rowData = [
+                    index + 1, // 序號
+                    data.IMAGE_ID,
+                    data.SATELLITE,
+                    data.SENSOR,
+                    // ACQU_DATE 可能包含逗號 (例如 '2018/09/19 02:14:01')，需用引號包裝
+                    `"${data.ACQU_DATE}"`, 
+                    formatAngle(data.Incidence_Angle), // Incidence Angle
+                    formatAngle(data.View_Angle_Along),
+                    formatAngle(data.View_Angle_Cross),
+                    formatAngle(data.Sun_Azimuth),
+                    formatAngle(data.Sun_Elevation),
+                    formatAngle(data.Orientation),
+                ].join(',');
+                csv += rowData + '\n';
+            });
+
+            // 創建 Blob 並觸發下載
+            const blob = new Blob(["\ufeff", csv], { type: 'text/csv;charset=utf-8;' }); // \ufeff 確保中文編碼正確
+            const link = document.createElement("a");
+            const url = URL.createObjectURL(blob);
+            
+            link.setAttribute("href", url);
+            link.setAttribute("download", `影像元數據_提取結果_${new Date().toISOString().slice(0, 10)}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            showMessage('試算表下載完成！', 'success');
+        }
+
+        // 初始化時渲染空表格
+        renderTable();
+
+    </script>
+</body>
+</html>
