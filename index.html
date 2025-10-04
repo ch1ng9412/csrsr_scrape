@@ -19,6 +19,22 @@
             padding-left: 0.5rem;
             padding-right: 0.5rem;
         }
+        /* 標示未匹配點位 */
+        .no-match {
+            background-color: #fee2e2; /* red-100 */
+            color: #b91c1c; /* red-700 */
+            font-weight: 600;
+        }
+        /* 標記多重匹配 (綠色背景) - 滿足使用者要求 */
+        .multiple-match {
+            background-color: #d1fae5; /* green-100 */
+            font-weight: 600;
+        }
+        /* 針對經緯度欄位強制增加寬度，確保八位小數完整顯示 */
+        .coordinate-cell {
+            min-width: 128px; /* 約 128px */
+            width: 128px;
+        }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen p-4 md:p-8">
@@ -63,6 +79,7 @@
             <p id="match-status" class="mt-4 text-sm font-medium text-gray-600">
                 已解析影像：<span id="record-count" class="font-mono text-teal-600">0</span> 筆。
                 已匹配點位：<span id="matched-count" class="font-mono text-blue-600">0</span> 筆。
+                <span id="grouped-match-info" class="text-xs text-gray-500 ml-2"></span>
             </p>
 
             <div id="matched-points-table-wrapper" class="overflow-x-auto rounded-lg border border-gray-200 mt-4 hidden">
@@ -70,18 +87,19 @@
                     <thead class="bg-blue-50">
                         <tr>
                             <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">點位序號</th>
-                            <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">輸入經度 (y)</th>
-                            <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">輸入緯度 (x)</th>
+                            <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider coordinate-cell">輸入經度 (y)</th>
+                            <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider coordinate-cell">輸入緯度 (x)</th>
                             <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">輸入日期 (d)</th>
-                            <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">匹配的 IMAGE_ID</th>
-                            <!-- 新增 Incidnece Angle 欄位 -->
+                            <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider min-w-[200px]">匹配狀態 (IMAGE_ID)</th>
+                            <!-- 角度元數據欄位 -->
                             <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">Incidence Angle</th>
-                            <!-- 其他元數據欄位 -->
                             <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">View Angle(Along)</th>
                             <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">View Angle(Cross)</th>
                             <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">Sun Azimuth</th>
                             <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">Sun Elevation</th>
                             <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">Orientation</th>
+                            <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">SATELLITE</th>
+                            <th class="px-2 py-3 text-left font-medium text-gray-600 uppercase tracking-wider">SENSOR</th>
                         </tr>
                     </thead>
                     <tbody id="matched-points-body" class="bg-white divide-y divide-gray-200">
@@ -151,7 +169,7 @@
     <script>
         // 全域變數
         let metadataCollection = []; // 儲存所有提取到的影像元數據
-        let matchedPoints = []; // 儲存匹配成功的點位數據
+        let matchedPoints = []; // 儲存匹配成功的點位數據 (已分組，一行可能代表多個 IMAGE_ID)
 
         // 步驟 1: 獲取 DOM 元素
         const inputArea = document.getElementById('raw-input');
@@ -168,6 +186,7 @@
         const matchedCountSpan = document.getElementById('matched-count');
         const matchedPointsBody = document.getElementById('matched-points-body');
         const matchedPointsWrapper = document.getElementById('matched-points-table-wrapper');
+        const groupedMatchInfoSpan = document.getElementById('grouped-match-info');
 
 
         // 定義 CSV/TSV 標頭
@@ -177,13 +196,6 @@
             'Sun Azimuth', 'Sun Elevation', 'Orientation',
             '西北緯度 (UL_LAT)', '東北緯度 (UR_LAT)', '西南緯度 (LL_LAT)', '東南緯度 (LR_LAT)',
             '西北經度 (UL_LNG)', '東北經度 (UR_LNG)', '西南經度 (LL_LNG)', '東南經度 (LR_LNG)'
-        ];
-
-        // 匹配結果表格的標頭 (包含日期和新增的六個角度/方位欄位)
-        const POINT_MATCH_HEADERS = [
-            '點位序號', '輸入經度 (y)', '輸入緯度 (x)', '輸入日期 (d)', '匹配的 IMAGE_ID',
-            'Incidence Angle', // 新增
-            'View Angle(Along)', 'View Angle(Cross)', 'Sun Azimuth', 'Sun Elevation', 'Orientation'
         ];
 
         /**
@@ -200,17 +212,28 @@
          * @description 將經緯度數值轉換為精確到小數點後 8 位的字串。如果輸入無效則返回 '-'。
          */
         function formatCoordinate(value) {
-            if (value === null || value === undefined || value === '' || value === 'null' || isNaN(parseFloat(value))) {
+            if (typeof value === 'string' && (value.includes('未匹配') || value === '-')) {
+                return value;
+            }
+            const num = parseFloat(value);
+            if (isNaN(num)) {
                 return '-';
             }
-            return parseFloat(value).toFixed(8);
+            return num.toFixed(8); // 確保固定 8 位小數
+        }
+        
+        /**
+         * @description 將 YYYYMMDD 格式的日期字串轉換為 YYYY/MM/DD 格式用於顯示或匯出。
+         */
+        function formatDateDisplay(d) {
+            if (d === '-' || (typeof d === 'string' && d.length !== 8)) return '';
+            return `${d.substring(0, 4)}/${d.substring(4, 6)}/${d.substring(6, 8)}`;
         }
         
         /**
          * @description 輔助函數 - 顯示訊息
          */
         function showMessage(text, type = 'info') {
-            // 忽略具體實現，確保訊息顯示
             messageBox.textContent = text;
             messageBox.className = `mt-4 p-3 rounded-lg text-sm font-medium ${
                 type === 'error' ? 'bg-red-100 text-red-800' : 
@@ -312,15 +335,11 @@
 
         /**
          * @description 判斷點位是否落在影像範圍內 (僅需經緯度)。
-         * @param {object} point {lng: y, lat: x}
-         * @param {object} image 影像元數據
-         * @returns {boolean}
          */
         function checkPointInImage(point, image) {
-            const y = point.lng; // 中心經度
-            const x = point.lat; // 中心緯度
+            const y = point.lng_raw; 
+            const x = point.lat_raw; 
 
-            // 輔助函數：安全解析數值
             const parseCoord = (val) => parseFloat(val) || 0;
 
             const UL_LAT = parseCoord(image.UL_LAT);
@@ -334,11 +353,11 @@
 
 
             // 1. 經度包含在影像圖當中 (y) 
-            // 由於角點經緯度可能稍微變動，使用近似的邊界判斷
             const minLng = Math.min(UL_LNG, UR_LNG, LL_LNG, LR_LNG);
             const maxLng = Math.max(UL_LNG, UR_LNG, LL_LNG, LR_LNG);
             
-            const isLngIncluded = (y >= minLng && y <= maxLng);
+            const tolerance = 0.000001; 
+            const isLngIncluded = (y >= minLng - tolerance && y <= maxLng + tolerance);
             
             if (!isLngIncluded) {
                 return false;
@@ -348,14 +367,31 @@
             const minLat = Math.min(UL_LAT, UR_LAT, LL_LAT, LR_LAT);
             const maxLat = Math.max(UL_LAT, UR_LAT, LL_LAT, LR_LAT);
             
-            const isLatIncluded = (x >= minLat && x <= maxLat);
+            const isLatIncluded = (x >= minLat - tolerance && x <= maxLat + tolerance);
             
             if (!isLatIncluded) {
                 return false;
             }
 
-            // 滿足所有條件 (經緯度條件)
             return true;
+        }
+
+        /**
+         * @description 根據關鍵元數據欄位生成唯一鍵，用於識別重複的影像數據。
+         * 此鍵用於判斷不同 IMAGE_ID 是否代表同一筆角度資訊 (以及衛星/感測器)。
+         */
+        function getMatchKey(image) {
+            // 包含所有角度數據、SATELLITE 和 SENSOR
+            return [
+                image.SATELLITE,
+                image.SENSOR,
+                formatAngle(image.Incidence_Angle),
+                formatAngle(image.View_Angle_Along),
+                formatAngle(image.View_Angle_Cross),
+                formatAngle(image.Sun_Azimuth),
+                formatAngle(image.Sun_Elevation),
+                formatAngle(image.Orientation)
+            ].join('|');
         }
         
         /**
@@ -367,7 +403,6 @@
                 return;
             }
 
-            // 接受 經度 緯度 [日期]，使用一個或多個空格/Tab鍵作為分隔符
             const rawPoints = pointInputArea.value.trim().split('\n').filter(line => line.trim() !== '');
             if (rawPoints.length === 0) {
                 showMessage('請在點位輸入框中貼入數據 (經度 緯度 [日期])。', 'info');
@@ -375,46 +410,43 @@
             }
 
             matchedPoints = []; // 重置匹配結果
+            let totalMatchedImagesCount = 0; // 紀錄實際匹配到的總影像筆數
+            let totalGroupedMatches = 0; // 紀錄分組合併後的行數
 
             rawPoints.forEach((line, index) => {
-                // 使用 /\s+/ 正則表達式來分隔空格或 Tab
                 const parts = line.trim().split(/\s+/).filter(p => p.length > 0); 
                 
-                // 必須至少有 2 個部分 (經度, 緯度)
                 if (parts.length < 2) return; 
 
-                const y = parseFloat(parts[0].trim()); // 中心經度 (y)
-                const x = parseFloat(parts[1].trim()); // 中心緯度 (x)
+                const y_raw = parseFloat(parts[0].trim()); 
+                const x_raw = parseFloat(parts[1].trim()); 
                 
-                // 如果使用者輸入了第三個日期欄位，我們將它作為 YYYYMMDD 格式處理
+                if (isNaN(y_raw) || isNaN(x_raw)) return;
+
+                const y_display = formatCoordinate(y_raw);
+                const x_display = formatCoordinate(x_raw);
+                
                 const inputDateString = parts.length > 2 ? parts[2].trim().substring(0, 8) : ''; 
-                const d = inputDateString.length === 8 ? inputDateString : '-'; // 確保是 YYYYMMDD 或 '-'
+                const d = inputDateString.length === 8 && !isNaN(parseInt(inputDateString)) ? inputDateString : '-'; 
 
-                if (isNaN(y) || isNaN(x)) return;
-
-                const point = { lng: y, lat: x, originalIndex: index + 1 };
-                let matchedImageId = '未匹配';
+                const point = { 
+                    lng_raw: y_raw, 
+                    lat_raw: x_raw, 
+                    lng_display: y_display, 
+                    lat_display: x_display, 
+                    originalIndex: index + 1,
+                    date: d 
+                };
                 
-                // 設定日期過濾器
                 const hasDateFilter = d !== '-';
                 let monthDayFilter = '';
                 if (hasDateFilter) {
-                    // 將 YYYYMMDD 轉換為 MM/DD (e.g., '08/07')
+                    // 獲取 MM/DD 格式用於比對
                     monthDayFilter = d.substring(4, 6) + '/' + d.substring(6, 8); 
                 }
 
-                // 初始化匹配到的元數據
-                let matchedMetadata = { 
-                    Incidence_Angle: '-', // 新增
-                    View_Angle_Along: '-',
-                    View_Angle_Cross: '-',
-                    Sun_Azimuth: '-',
-                    Sun_Elevation: '-',
-                    Orientation: '-'
-                };
-
-                // 尋找匹配的影像 (同時檢查座標和日期)
-                const match = metadataCollection.find(image => {
+                // 尋找所有匹配的影像
+                const allMatches = metadataCollection.filter(image => {
                     // 1. 座標匹配檢查 (必須)
                     if (!checkPointInImage(point, image)) {
                         return false;
@@ -423,41 +455,92 @@
                     // 2. 日期匹配檢查 (如果提供了日期)
                     if (hasDateFilter) {
                         const acquDate = image.ACQU_DATE || '';
-                        // 檢查 ACQU_DATE (e.g., '2018/08/07 10:30:00') 是否包含 '08/07'
-                        // ACQU_DATE 格式應為 YYYY/MM/DD HH:MM:SS
+                        // ACQU_DATE 格式為 YYYY/MM/DD HH:MM:SS
+                        // 檢查 ACQU_DATE 內部是否包含 MM/DD
                         return acquDate.includes(monthDayFilter);
                     }
 
-                    // 如果沒有提供日期，只要座標匹配就視為成功
                     return true;
                 });
+                
+                // --- 處理匹配結果 ---
+                const numMatches = allMatches.length;
 
-                if (match) {
-                    matchedImageId = match.IMAGE_ID;
-                    // 如果匹配成功，提取額外的元數據
-                    matchedMetadata = {
-                        Incidence_Angle: match.Incidence_Angle, // 新增
-                        View_Angle_Along: match.View_Angle_Along,
-                        View_Angle_Cross: match.View_Angle_Cross,
-                        Sun_Azimuth: match.Sun_Azimuth,
-                        Sun_Elevation: match.Sun_Elevation,
-                        Orientation: match.Orientation
-                    };
+                if (numMatches === 0) {
+                    // 未匹配：統一使用 '未匹配' 標示
+                    matchedPoints.push({
+                        index: point.originalIndex,
+                        lng: point.lng_display,
+                        lat: point.lat_display,
+                        date: d,
+                        imageIds: [], // 空 ID 列表
+                        matchStatusDisplay: '未匹配',
+                        matchCount: 0,
+                        // 預設的空元數據
+                        Incidence_Angle: '-', View_Angle_Along: '-', View_Angle_Cross: '-',
+                        Sun_Azimuth: '-', Sun_Elevation: '-', Orientation: '-',
+                        SATELLITE: '-', SENSOR: '-'
+                    });
+                    totalGroupedMatches++;
+                } else {
+                    // 匹配成功 (單一或多重)
+                    // 使用 Map 進行分組，鍵為元數據 Key
+                    const groupedMatches = new Map();
+
+                    allMatches.forEach(match => {
+                        const key = getMatchKey(match); // 獲取元數據的唯一鍵
+                        
+                        // 檢查該元數據組是否已存在
+                        if (!groupedMatches.has(key)) {
+                            groupedMatches.set(key, {
+                                index: point.originalIndex,
+                                lng: point.lng_display,
+                                lat: point.lat_display,
+                                date: d,
+                                imageIds: [], // 儲存所有 ID
+                                matchCount: 0, 
+                                // 儲存匹配到的元數據 (用於代表該組)
+                                Incidence_Angle: match.Incidence_Angle,
+                                View_Angle_Along: match.View_Angle_Along,
+                                View_Angle_Cross: match.View_Angle_Cross,
+                                Sun_Azimuth: match.Sun_Azimuth,
+                                Sun_Elevation: match.Sun_Elevation,
+                                Orientation: match.Orientation,
+                                SATELLITE: match.SATELLITE,
+                                SENSOR: match.SENSOR
+                            });
+                        }
+                        
+                        const group = groupedMatches.get(key);
+                        group.imageIds.push(match.IMAGE_ID);
+                        group.matchCount++;
+                    });
+
+                    // 將分組結果展開到 matchedPoints 列表中
+                    groupedMatches.forEach(group => {
+                        // 更新顯示狀態：將所有 ID 以逗號分隔
+                        group.matchStatusDisplay = group.imageIds.join(', '); 
+                        matchedPoints.push(group);
+                        totalMatchedImagesCount += group.imageIds.length; 
+                        totalGroupedMatches++;
+                    });
                 }
-
-                // 將點位與匹配到的元數據一起儲存
-                matchedPoints.push({
-                    index: point.originalIndex,
-                    lng: formatCoordinate(y),
-                    lat: formatCoordinate(x),
-                    date: d, // 儲存 YYYYMMDD 格式或 '-'
-                    imageId: matchedImageId,
-                    ...matchedMetadata // 展開匹配到的元數據 (或預設的 '-')
-                });
             });
 
             renderTables();
-            showMessage(`匹配分析完成。共處理 ${rawPoints.length} 筆點位，成功匹配 ${matchedPoints.filter(p => p.imageId !== '未匹配').length} 筆。`, 'success');
+            // 匹配點位的計數使用原始點位數量
+            const actualMatchedPointsCount = new Set(matchedPoints.filter(p => p.matchCount > 0).map(p => p.index)).size;
+            
+            let groupedInfoText = '';
+            const successfulGroupedRows = matchedPoints.filter(p => p.matchCount > 0);
+            const totalGroupedRows = successfulGroupedRows.length;
+            
+            if (totalMatchedImagesCount > 0) {
+                 groupedInfoText = `(共合併為 ${totalGroupedRows} 筆元數據結果)`;
+            }
+
+            groupedMatchInfoSpan.textContent = groupedInfoText;
+            showMessage(`匹配分析完成。共處理 ${rawPoints.length} 筆點位，成功匹配到 ${actualMatchedPointsCount} 個點位的影像數據 (總計 ${totalMatchedImagesCount} 筆影像結果)。`, 'success');
         });
 
 
@@ -500,12 +583,12 @@
                     row.classList.add('hover:bg-gray-50', 'transition', 'duration-100');
                     
                     const displayFields = [
-                        index + 1, // 序號
+                        index + 1, 
                         data.IMAGE_ID,
                         data.SATELLITE,
                         data.SENSOR,
                         data.ACQU_DATE,
-                        formatAngle(data.Incidence_Angle), // 入射角
+                        formatAngle(data.Incidence_Angle), 
                         formatAngle(data.View_Angle_Along),
                         formatAngle(data.View_Angle_Cross),
                         formatAngle(data.Sun_Azimuth),
@@ -526,7 +609,7 @@
                         const cell = row.insertCell();
                         cell.textContent = value;
                         cell.classList.add('px-2', 'py-2', 'whitespace-nowrap', 'text-sm', 'text-gray-700');
-                        if (typeof value === 'string' && value.includes('.')) {
+                        if (typeof value === 'string' && value.includes('.') && value.length > 5) {
                             cell.classList.add('font-mono', 'text-right');
                         }
                     });
@@ -538,44 +621,83 @@
             }
 
             // --- 渲染匹配點位結果表格 ---
-            matchedCountSpan.textContent = matchedPoints.length;
+            const totalPointCount = new Set(matchedPoints.map(p => p.index)).size;
+            matchedCountSpan.textContent = totalPointCount;
 
             if (hasMatched) {
                 matchedPointsWrapper.classList.remove('hidden');
                 matchedPointsBody.innerHTML = '';
-                matchedPoints.forEach((point) => {
+                
+                matchedPoints.forEach((point, rowIndex) => {
                     const row = matchedPointsBody.insertRow();
-                    row.classList.add('hover:bg-gray-50', 'transition', 'duration-100');
+                    row.classList.add('transition', 'duration-100');
                     
-                    // 注意：這裡的 cells 順序與 POINT_MATCH_HEADERS 匹配
+                    // 標記多重匹配 (matchCount > 1 表示此行代表多個 ID，元數據相同)
+                    if (point.matchCount > 1) {
+                        // 使用綠色填充背景 (multiple-match class)
+                        row.classList.add('multiple-match', 'hover:bg-green-200');
+                    } else if (point.matchCount === 0) {
+                        row.classList.add('no-match');
+                    } else {
+                        row.classList.add('hover:bg-gray-50');
+                    }
+                    
+                    // Cells rendering logic
                     const cells = [
                         point.index,
-                        point.lng,
-                        point.lat,
-                        point.date === '-' ? '' : point.date, // 輸出 YYYYMMDD
-                        point.imageId,
-                        // 新增的匹配元數據
-                        formatAngle(point.Incidence_Angle), // 入射角
+                        point.lng, 
+                        point.lat, 
+                        formatDateDisplay(point.date), 
+                        point.matchStatusDisplay, // 顯示逗號分隔的 IDs 或 '未匹配'
+                        // 匹配到的元數據 (重複數據已合併為一列)
+                        formatAngle(point.Incidence_Angle),
                         formatAngle(point.View_Angle_Along),
                         formatAngle(point.View_Angle_Cross),
                         formatAngle(point.Sun_Azimuth),
                         formatAngle(point.Sun_Elevation),
-                        formatAngle(point.Orientation)
+                        formatAngle(point.Orientation),
+                        point.SATELLITE,
+                        point.SENSOR
                     ];
 
-                    cells.forEach((value) => {
+                    cells.forEach((value, colIndex) => {
                         const cell = row.insertCell();
                         cell.textContent = value;
                         cell.classList.add('px-2', 'py-2', 'whitespace-nowrap', 'text-sm', 'text-gray-700');
                         
-                        // 對未匹配的點位標記顏色
-                        if (point.imageId === '未匹配' && cells.indexOf(value) <= 4) { // 只對前五欄標記
-                             cell.classList.add('text-red-500', 'italic', 'font-semibold');
+                        // 針對輸入點位的前四欄 (Index, Lng, Lat, Date) 應用基礎樣式
+                        if (colIndex < 4) { 
+                            cell.classList.add('bg-blue-50/50', 'font-bold');
+                            // 如果是綠底，則覆蓋邊緣欄位的背景色
+                            if (point.matchCount > 1) {
+                                cell.classList.remove('bg-blue-50/50');
+                            }
                         }
                         
-                        // 對角度數據使用等寬字體並靠右對齊
-                        if (typeof value === 'string' && value.includes('.') && value.length > 5) {
+                        // 對經緯度數據使用等寬字體並靠右對齊 (第 1, 2 欄是經緯度)
+                        if (colIndex === 1 || colIndex === 2) {
+                            cell.classList.add('font-mono', 'text-right', 'coordinate-cell'); 
+                        }
+                        
+                        // 對角度數據使用等寬字體並靠右對齊 (從第 5 欄到第 10 欄是角度數據)
+                        if (colIndex >= 5 && colIndex <= 10 && typeof value === 'string' && value.includes('.') && value.length > 5) {
                              cell.classList.add('font-mono', 'text-right');
+                        }
+                        
+                         // 對未匹配的點位
+                        if (point.matchCount === 0) {
+                            if (colIndex === 4) { // 狀態欄位
+                                cell.classList.remove('text-gray-700');
+                                cell.classList.add('text-red-700', 'italic', 'font-bold');
+                            } else if (colIndex > 4) { // 元數據欄位，清空內容並變灰
+                                cell.textContent = '-';
+                                cell.classList.add('text-gray-400', 'italic');
+                            }
+                        }
+                         // 針對 ID 列表欄位，強制換行顯示
+                        if (colIndex === 4) {
+                            cell.style.whiteSpace = 'normal'; // 允許自動換行
+                            cell.style.maxWidth = '250px';
                         }
                     });
                 });
@@ -596,7 +718,7 @@
 
             let csv = '';
 
-            // 1. 影像元數據區塊
+            // 1. 影像元數據區塊 (不變)
             if (metadataCollection.length > 0) {
                 csv += "### 影像元數據清單 ###\n";
                 csv += METADATA_HEADERS.join(',') + '\n';
@@ -607,8 +729,8 @@
                         data.IMAGE_ID,
                         data.SATELLITE,
                         data.SENSOR,
-                        `"${data.ACQU_DATE}"`, // 確保日期包含引號
-                        formatAngle(data.Incidence_Angle), // 入射角
+                        `"${data.ACQU_DATE}"`, 
+                        formatAngle(data.Incidence_Angle),
                         formatAngle(data.View_Angle_Along),
                         formatAngle(data.View_Angle_Cross),
                         formatAngle(data.Sun_Azimuth),
@@ -625,30 +747,45 @@
                     ].join(',');
                     csv += rowData + '\n';
                 });
-                csv += '\n'; // 分隔符
+                csv += '\n'; 
             }
 
 
-            // 2. 點位匹配結果區塊
+            // 2. 點位匹配結果區塊 (使用分組後的數據)
             if (matchedPoints.length > 0) {
-                csv += "### 點位匹配結果 ###\n";
-                // 匯出時包含日期欄位
-                csv += POINT_MATCH_HEADERS.join(',') + '\n';
+                csv += "### 點位匹配結果 (元數據相同的影像已合併為一行) ###\n";
+                
+                // 匯出標頭
+                const pointMatchCsvHeaders = [
+                    '點位序號', '輸入經度 (y)', '輸入緯度 (x)', '輸入日期 (d)', 
+                    '匹配的 Images_ID_List', '匹配數量 (Match Count)', 
+                    'Incidence Angle', 'View Angle(Along)', 'View Angle(Cross)', 
+                    'Sun Azimuth', 'Sun Elevation', 'Orientation', 
+                    'SATELLITE', 'SENSOR' // 新增的欄位
+                ];
+                csv += pointMatchCsvHeaders.join(',') + '\n';
 
                 matchedPoints.forEach(point => {
+                    // 匯出時使用分號 (;) 區隔 ID，避免逗號與 CSV 欄位分隔符號衝突
+                    const imageIdList = point.matchCount === 0 ? '' : point.imageIds.join(';'); 
+                    const matchCount = point.matchCount || 0;
+
                     const rowData = [
                         point.index,
-                        point.lng,
-                        point.lat,
-                        point.date === '-' ? '' : point.date, // 輸出 YYYYMMDD
-                        point.imageId,
+                        point.lng, 
+                        point.lat, 
+                        formatDateDisplay(point.date), 
+                        `"${imageIdList}"`, // 輸出 ID 列表 (用引號包圍，確保分號不會被誤判)
+                        matchCount,
                         // 匹配到的元數據
-                        formatAngle(point.Incidence_Angle), // 入射角
+                        formatAngle(point.Incidence_Angle),
                         formatAngle(point.View_Angle_Along),
                         formatAngle(point.View_Angle_Cross),
                         formatAngle(point.Sun_Azimuth),
                         formatAngle(point.Sun_Elevation),
-                        formatAngle(point.Orientation)
+                        formatAngle(point.Orientation),
+                        point.SATELLITE || '-', // 匯出衛星/感測器名稱
+                        point.SENSOR || '-'
                     ].join(',');
                     csv += rowData + '\n';
                 });
@@ -682,7 +819,7 @@
 
             let tsv = '';
 
-            // 1. 影像元數據區塊 (TSV)
+            // 1. 影像元數據區塊 (不變)
             if (metadataCollection.length > 0) {
                 tsv += "### 影像元數據清單 ###\n";
                 tsv += METADATA_HEADERS.join('\t') + '\n';
@@ -694,7 +831,7 @@
                         data.SATELLITE,
                         data.SENSOR,
                         (data.ACQU_DATE || '-').replace(/\t/g, ' ').replace(/\n/g, ' '), 
-                        formatAngle(data.Incidence_Angle), // 入射角
+                        formatAngle(data.Incidence_Angle),
                         formatAngle(data.View_Angle_Along),
                         formatAngle(data.View_Angle_Cross),
                         formatAngle(data.Sun_Azimuth),
@@ -711,29 +848,43 @@
                     ].join('\t');
                     tsv += rowData + '\n';
                 });
-                tsv += '\n'; // 分隔符
+                tsv += '\n'; 
             }
 
-            // 2. 點位匹配結果區塊 (TSV)
+            // 2. 點位匹配結果區塊 (使用分組後的數據)
             if (matchedPoints.length > 0) {
-                tsv += "### 點位匹配結果 ###\n";
-                // 匯出時包含日期欄位
-                tsv += POINT_MATCH_HEADERS.join('\t') + '\n';
+                tsv += "### 點位匹配結果 (元數據相同的影像已合併為一行) ###\n";
+                
+                const pointMatchCsvHeaders = [
+                    '點位序號', '輸入經度 (y)', '輸入緯度 (x)', '輸入日期 (d)', 
+                    '匹配的 Images_ID_List', '匹配數量 (Match Count)', 
+                    'Incidence Angle', 'View Angle(Along)', 'View Angle(Cross)', 
+                    'Sun Azimuth', 'Sun Elevation', 'Orientation',
+                    'SATELLITE', 'SENSOR' // 新增的欄位
+                ];
+                tsv += pointMatchCsvHeaders.join('\t') + '\n';
 
                 matchedPoints.forEach(point => {
+                    // 匯出時使用分號 (;) 區隔 ID，這是 Excel 貼上時最不容易出錯的分隔方式
+                    const imageIdList = point.matchCount === 0 ? '' : point.imageIds.join(';'); 
+                    const matchCount = point.matchCount || 0;
+
                     const rowData = [
                         point.index,
-                        point.lng,
-                        point.lat,
-                        point.date === '-' ? '' : point.date, // 輸出 YYYYMMDD
-                        point.imageId,
+                        point.lng, 
+                        point.lat, 
+                        formatDateDisplay(point.date), 
+                        imageIdList, // TSV 中直接輸出 ID 列表
+                        matchCount,
                         // 匹配到的元數據
-                        formatAngle(point.Incidence_Angle), // 入射角
+                        formatAngle(point.Incidence_Angle),
                         formatAngle(point.View_Angle_Along),
                         formatAngle(point.View_Angle_Cross),
                         formatAngle(point.Sun_Azimuth),
                         formatAngle(point.Sun_Elevation),
-                        formatAngle(point.Orientation)
+                        formatAngle(point.Orientation),
+                        point.SATELLITE || '-',
+                        point.SENSOR || '-'
                     ].join('\t');
                     tsv += rowData + '\n';
                 });
