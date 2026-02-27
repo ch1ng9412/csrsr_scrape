@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HTML 轉 Google Sheet 資料擷取工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 自訂滾動條樣式 */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-50 min-h-screen text-slate-800 font-sans">
+
+    <div class="max-w-5xl mx-auto p-6 md:p-10">
+        <!-- 新增的導覽切換按鈕區塊 -->
+        <div class="flex justify-end mb-4">
+            <a href="index.html" class="inline-flex items-center gap-2 px-4 py-2 bg-white hover:bg-blue-50 text-blue-700 font-semibold rounded-lg shadow-sm border border-slate-200 transition-colors text-sm">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M19 12H5"></path>
+                    <path d="M12 19l-7-7 7-7"></path>
+                </svg>
+                返回衛星元數據解析工具
+            </a>
+        </div>
+
+        <header class="mb-8 text-center">
+            <h1 class="text-3xl font-bold text-slate-900 mb-2">HTML 資料擷取工具</h1>
+            <p class="text-slate-500">將特定的網頁原始碼轉換為 Google Sheets 完美相容的格式</p>
+        </header>
+
+        <main class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+            <!-- 左側：輸入區 -->
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col h-full">
+                <div class="flex justify-between items-center mb-4">
+                    <label for="htmlInput" class="text-lg font-semibold text-slate-700">步驟 1：貼上 HTML 原始碼</label>
+                    <button id="loadSampleBtn"
+                        class="text-sm text-blue-600 hover:text-blue-800 font-medium transition-colors">載入範例資料</button>
+                </div>
+                <textarea id="htmlInput"
+                    class="w-full flex-grow p-4 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none font-mono text-sm min-h-[300px]"
+                    placeholder="請將含有 <label id='orderID'> 與 <table id='tableView'> 的 HTML 原始碼貼在此處..."></textarea>
+
+                <button id="extractBtn"
+                    class="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-md flex justify-center items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <path d="M12 18v-6"></path>
+                        <path d="m9 15 3 3 3-3"></path>
+                    </svg>
+                    執行解析與轉換
+                </button>
+            </div>
+
+            <!-- 右側：輸出區 -->
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col h-full">
+                <div class="mb-4 flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3">
+                    <div>
+                        <label class="text-lg font-semibold text-slate-700">步驟 2：累積的轉換結果</label>
+                        <p class="text-sm text-slate-500 mt-1">每次執行解析皆會累積於此。可單獨複製或一次全部複製。</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="clearAllBtn"
+                            class="text-sm bg-white hover:bg-red-50 text-red-600 border border-red-200 font-medium py-1.5 px-3 rounded shadow-sm transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled>
+                            清空
+                        </button>
+                        <button id="copyAllBtn"
+                            class="text-sm bg-green-600 hover:bg-green-700 text-white font-medium py-1.5 px-3 rounded shadow-sm transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                            全部複製
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 累積清單容器 -->
+                <div id="dataList"
+                    class="flex-grow flex flex-col gap-3 overflow-y-auto min-h-[300px] max-h-[600px] p-2 bg-slate-50 border border-slate-200 rounded-lg">
+                    <div class="flex items-center justify-center h-full text-slate-400 text-sm">
+                        尚無資料，請從左側解析 HTML
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- 提示訊息框 (Toast) -->
+    <div id="toast"
+        class="fixed bottom-5 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-6 py-3 rounded-full shadow-lg opacity-0 pointer-events-none transition-opacity duration-300 z-50 flex items-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4ade80"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+        </svg>
+        <span id="toastMessage">已複製到剪貼簿！</span>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const htmlInput = document.getElementById('htmlInput');
+            const extractBtn = document.getElementById('extractBtn');
+            const loadSampleBtn = document.getElementById('loadSampleBtn');
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toastMessage');
+
+            // 新增的 DOM 元素
+            const dataList = document.getElementById('dataList');
+            const copyAllBtn = document.getElementById('copyAllBtn');
+            const clearAllBtn = document.getElementById('clearAllBtn');
+
+            // 儲存累積的資料
+            let accumulatedRecords = [];
+
+            // 顯示提示訊息
+            function showToast(message) {
+                toastMessage.textContent = message;
+                toast.classList.remove('opacity-0');
+                toast.classList.add('opacity-100');
+                setTimeout(() => {
+                    toast.classList.remove('opacity-100');
+                    toast.classList.add('opacity-0');
+                }, 3000);
+            }
+
+            // 格式化單元格資料（處理換行與引號）
+            function formatCell(arr) {
+                if (!arr || arr.length === 0) return '';
+                if (arr.length === 1) return arr[0];
+                // 如果有多筆資料，用換行符號連接，並在前後加上雙引號 (Excel/Google Sheets 標準 TSV 格式)
+                return '"' + arr.join('\n') + '"';
+            }
+
+            // 共用複製功能 (透過建立暫時的 textarea)
+            function copyToClipboard(text, successMsg) {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.opacity = '0';
+                document.body.appendChild(ta);
+                ta.select();
+                try {
+                    document.execCommand('copy');
+                    showToast(successMsg || '已複製到剪貼簿！');
+                } catch (err) {
+                    showToast('複製失敗，請手動選取複製');
+                }
+                document.body.removeChild(ta);
+            }
+
+            // 渲染累積清單
+            function renderList() {
+                if (accumulatedRecords.length === 0) {
+                    dataList.innerHTML = '<div class="flex items-center justify-center h-full text-slate-400 text-sm py-10">尚無資料，請從左側解析 HTML</div>';
+                    copyAllBtn.disabled = true;
+                    clearAllBtn.disabled = true;
+                    return;
+                }
+
+                copyAllBtn.disabled = false;
+                clearAllBtn.disabled = false;
+                dataList.innerHTML = '';
+
+                accumulatedRecords.forEach((record, index) => {
+                    const card = document.createElement('div');
+                    card.className = "bg-white p-3 border border-slate-200 rounded shadow-sm relative group";
+                    card.innerHTML = `
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="font-bold text-sm text-slate-700">#${index + 1} - ${record.orderId} <span class="text-xs text-slate-500 font-normal">(${record.count} 筆影像)</span></span>
+                            <div class="flex gap-2 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                                <button class="copy-single-btn text-xs bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 py-1 px-2 rounded flex items-center gap-1" data-index="${index}">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                                    複製
+                                </button>
+                                <button class="del-single-btn text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 py-1 px-2 rounded" data-index="${index}">
+                                    刪除
+                                </button>
+                            </div>
+                        </div>
+                        <textarea class="w-full text-xs font-mono bg-slate-50 border border-slate-100 p-2 rounded resize-none focus:outline-none focus:ring-1 focus:ring-blue-300" readonly rows="2">${record.tsv}</textarea>
+                    `;
+                    dataList.appendChild(card);
+                });
+
+                // 綁定單筆按鈕事件
+                document.querySelectorAll('.copy-single-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const idx = e.currentTarget.getAttribute('data-index');
+                        copyToClipboard(accumulatedRecords[idx].tsv, `已複製 #${parseInt(idx) + 1} 的資料！`);
+                    });
+                });
+
+                document.querySelectorAll('.del-single-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => {
+                        const idx = e.currentTarget.getAttribute('data-index');
+                        accumulatedRecords.splice(idx, 1);
+                        renderList();
+                        showToast('已刪除該筆資料');
+                    });
+                });
+            }
+
+            // 執行解析
+            extractBtn.addEventListener('click', () => {
+                const htmlString = htmlInput.value.trim();
+
+                if (!htmlString) {
+                    showToast('請先貼上 HTML 原始碼');
+                    return;
+                }
+
+                // 將字串解析為 DOM 模型
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(htmlString, 'text/html');
+
+                try {
+                    // 1. 取得訂單編號
+                    let orderId = '';
+                    const orderLabel = doc.getElementById('orderID');
+                    if (orderLabel) {
+                        const text = orderLabel.textContent.trim();
+                        orderId = text.replace('訂單編號：', '').trim();
+                    } else {
+                        // 嘗試用另一種方式找，以防結構微調
+                        const labels = Array.from(doc.querySelectorAll('label'));
+                        const foundLabel = labels.find(l => l.textContent.includes('訂單編號：'));
+                        if (foundLabel) {
+                            orderId = foundLabel.textContent.replace('訂單編號：', '').trim();
+                        }
+                    }
+
+                    // 2. 取得表格資料
+                    const rows = doc.querySelectorAll('table tbody tr');
+                    const imageIds = [];
+                    const imageDates = [];
+                    const imageTypes = [];
+                    const fileNames = [];
+
+                    rows.forEach(row => {
+                        const cells = row.querySelectorAll('td');
+                        if (cells.length >= 6) { // 確保有足夠的欄位
+                            imageIds.push(cells[0].textContent.trim());
+                            imageDates.push(cells[3].textContent.trim());
+                            imageTypes.push(cells[4].textContent.trim());
+                            fileNames.push(cells[5].textContent.trim());
+                        }
+                    });
+
+                    // 若沒有找到資料
+                    if (!orderId && imageIds.length === 0) {
+                        showToast('找不到指定的資料結構，請確認 HTML 是否正確。');
+                        return;
+                    }
+
+                    // 3. 整理輸出格式
+                    // 影像類別通常是一樣的，如果都一樣我們只取唯一值，若不同則依要求格式化
+                    const uniqueTypes = [...new Set(imageTypes)];
+
+                    const outputRow = [
+                        orderId,
+                        formatCell(imageIds),
+                        formatCell(imageDates),
+                        formatCell(uniqueTypes), // 影像類別
+                        formatCell(fileNames)
+                    ];
+
+                    // 使用 Tab (\t) 分隔欄位
+                    const finalOutput = outputRow.join('\t');
+
+                    // 紀錄到陣列中
+                    accumulatedRecords.push({
+                        orderId: orderId || '未命名訂單',
+                        count: imageIds.length,
+                        tsv: finalOutput
+                    });
+
+                    renderList();
+                    htmlInput.value = ''; // 解析後清空輸入框，方便直接貼下一筆
+                    showToast('解析成功！已加入清單。');
+
+                } catch (error) {
+                    console.error("解析發生錯誤:", error);
+                    showToast('解析時發生錯誤，請檢查 HTML 格式。');
+                }
+            });
+
+            // 全部複製功能
+            copyAllBtn.addEventListener('click', () => {
+                const allTsv = accumulatedRecords.map(r => r.tsv).join('\n');
+                copyToClipboard(allTsv, '已複製所有累積的資料！可以去 Google Sheet 貼上了');
+            });
+
+            // 清空功能
+            clearAllBtn.addEventListener('click', () => {
+                if (confirm('確定要清空所有已累積的資料嗎？')) {
+                    accumulatedRecords = [];
+                    renderList();
+                    showToast('資料已清空');
+                }
+            });
+
+            // 載入範例資料 (用於測試)
+            loadSampleBtn.addEventListener('click', () => {
+                htmlInput.value = `<div style="width:100%; background-color:#f5f5f5; margin:20px auto 30px auto; padding:10px; box-shadow: 4px 4px 12px 4px rgba(200,200,200,0.5);">
+            <label style="font-size:18px; color:#404040;" id="orderID">訂單編號：114LL057-074</label><br>
+        </div>
+        <table id="tableView" class="table dataTable" style="width:100%;">
+                    <tbody><tr><td>0J-00IUD</td><td>授權書待上傳</td><td></td><td>2019/09/26</td><td>SPOT衛星</td><td>nantou_sp6_201909265_twd97.zip</td><td class="text-left"></td><td class="text-left"></td><td></td></tr><tr><td>0J-00JX5</td><td>授權書待上傳</td><td></td><td>2021/11/15</td><td>SPOT衛星</td><td>SPOT7_20211115_00.zip</td><td class="text-left"></td><td class="text-left"></td><td></td></tr><tr><td>0J-00K1Z</td><td>授權書待上傳</td><td></td><td>2022/09/28</td><td>SPOT衛星</td><td>SPOT7_20220928_01.zip</td><td class="text-left"></td><td class="text-left"></td><td></td></tr></tbody>
+                </table>`;
+                showToast('已載入範例 HTML');
+            });
+        });
+    </script>
+</body>
+
+</html>
