@@ -40,6 +40,17 @@
 <body class="bg-gray-50 min-h-screen p-4 md:p-8">
 
     <div id="app" class="max-w-7xl mx-auto">
+        <!-- 新增的導覽切換按鈕區塊 -->
+        <div class="flex justify-end mb-4">
+            <a href="app2.html" class="inline-flex items-center gap-2 px-4 py-2 bg-white hover:bg-teal-50 text-teal-700 font-semibold rounded-lg shadow-sm border border-gray-200 transition-colors text-sm">
+                切換至 HTML 資料擷取工具
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 12h14"></path>
+                    <path d="M12 5l7 7-7 7"></path>
+                </svg>
+            </a>
+        </div>
+
         <header class="mb-8 text-center">
             <h1 class="text-4xl font-extrabold text-teal-700">衛星元數據批次解析</h1>
             <p class="text-gray-600 mt-2">請將網頁元素中找到的 <code>jQuery.data(...)</code> 字串貼入下方區域進行解析。</p>
